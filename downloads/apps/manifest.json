@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "apps": [
+    {
+      "id": "phrenos-windows",
+      "name": "Phrenos",
+      "platform": "Windows",
+      "file": "Phrenos-Windows.exe",
+      "free": true,
+      "path": "downloads/apps/Phrenos-Windows.exe",
+      "bytes": 63257339,
+      "sha256": "5eda8ec09c02fe6325c095d04d8c806cf05f19264cdfe7879f4376e90c8232c8"
+    },
+    {
+      "id": "phrenos-android",
+      "name": "Phrenos",
+      "platform": "Android",
+      "file": "Phrenos-Android.apk",
+      "package": "com.neurion.brainhealth",
+      "version": "1.0",
+      "versionCode": 1,
+      "minSdk": 22,
+      "free": true,
+      "path": "downloads/apps/Phrenos-Android.apk",
+      "bytes": 3807466,
+      "sha256": "01238bbe98fbfe797bcbbd701646206a50152063ace734ec9a93274cf9561e34"
+    },
+    {
+      "id": "memory-anchor-demo",
+      "name": "Memory Anchor / 安锚",
+      "platform": "Android",
+      "file": "Memory-Anchor-demo-bilingual.apk",
+      "package": "com.neurion.memoryanchor",
+      "version": "1.1.0",
+      "versionCode": 2,
+      "minSdk": 24,
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "demo": true,
+      "free": true,
+      "path": "downloads/apps/Memory-Anchor-demo-bilingual.apk",
+      "bytes": 102054755,
+      "sha256": "1966a585cdcbd4d5ea295b3b9faf36b1e15961e95a88388208a080ba8c8851a5"
+    }
+  ]
+}
