@@ -279,12 +279,12 @@ dialog[open]::backdrop{opacity:1;transition:opacity 240ms var(--ease-out)}
   .qs-step h3{font-size:24px!important}
 }
 /* ---- Spatial layer: neural background, concept art, tighter spacing ---- */
-.neuro-bg{position:fixed;inset:0;width:100vw;height:100vh;z-index:0;pointer-events:none;opacity:.9}
+.neuro-bg{position:fixed;inset:0;width:100vw;height:100vh;z-index:0;pointer-events:none}
 .site-main{position:relative;z-index:1}
-body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(120% 90% at 30% 50%,#080a0c00 0%,#080a0c99 70%,#080a0cd9 100%)}
+body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:linear-gradient(90deg,#080a0ca6 0%,#080a0c4d 42%,#080a0c00 68%)}
 .site-main,.hero,.ring-section,.audience-section,.handbook-store,.qs-section{background-color:transparent!important}
 .qs-section{background-image:none!important}
-.mission-section,.memory-anchor-section,.synapse-section,.waitlist-section{background-color:#10191a8c!important}
+.mission-section,.memory-anchor-section,.synapse-section,.waitlist-section{background-color:transparent!important}
 
 /* Project cards with layered concept art */
 .audience-card{position:relative;overflow:hidden;min-height:420px!important;justify-content:flex-start!important}
@@ -743,49 +743,17 @@ ${auto ? `<div class="wx-auto"><p class="wx-auto-tag">推荐 · 自动发货</p>
   else if (window.location.hash) requestAnimationFrame(() => root.querySelector(`#${CSS.escape(window.location.hash.slice(1))}`)?.scrollIntoView({ behavior: 'instant' }))
 })()
 </script><script>(() => {
-  // ---- 3D neural background: a slowly rotating cloud of neurons that fire along their connections.
-  // Pointer position steers the view and shifts the hue; scrolling turns the cloud.
+  // ---- Spatial backgrounds: one fixed canvas, a different 3D scene for each section.
+  // Scenes crossfade as the section in the middle of the viewport changes.
+  // The pointer steers the camera and shifts the hue; scrolling turns the scene.
   const canvas = document.querySelector('.neuro-bg')
   if (!canvas || !canvas.getContext) return
   const ctx = canvas.getContext('2d')
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches
   const fine = matchMedia('(hover: hover) and (pointer: fine)').matches
   const small = innerWidth < 800
-  const N = small ? 70 : 130
   const rand = (a, b) => a + Math.random() * (b - a)
-
-  const nodes = []
-  while (nodes.length < N) {
-    const x = rand(-1, 1), y = rand(-1, 1), z = rand(-1, 1)
-    // two soft hemispheres with a shallow groove between them
-    if ((x / 1.45) ** 2 + (y / 0.95) ** 2 + (z / 1.1) ** 2 > 1) continue
-    if (Math.abs(x) < 0.07 && y < 0.4) continue
-    nodes.push({ x: x * 1.1, y: y * 0.9, z, flash: 0, links: [] })
-  }
-  const edges = []
-  nodes.forEach((a, i) => {
-    const near = nodes.map((b, j) => [j, (a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2])
-      .filter(([j]) => j !== i).sort((p, q) => p[1] - q[1]).slice(0, 3)
-    near.forEach(([j]) => {
-      if (edges.some(e => (e.a === i && e.b === j) || (e.a === j && e.b === i))) return
-      const e = { a: i, b: j }
-      edges.push(e)
-      a.links.push(e)
-      nodes[j].links.push(e)
-    })
-  })
-
-  const pulses = []
-  const fire = (i, energy) => {
-    const n = nodes[i]
-    n.flash = 1
-    if (energy < 0.25) return
-    n.links.forEach(e => {
-      if (pulses.length < 90 && Math.random() < 0.55) {
-        pulses.push({ e, from: i, to: e.a === i ? e.b : e.a, t: 0, speed: rand(0.012, 0.026), energy: energy * 0.72 })
-      }
-    })
-  }
+  const TAU = Math.PI * 2
 
   let w = 0, h = 0, dpr = 1
   const resize = () => {
@@ -799,86 +767,362 @@ ${auto ? `<div class="wx-auto"><p class="wx-auto-tag">推荐 · 自动发货</p>
   resize()
   addEventListener('resize', resize, { passive: true })
 
-  const pointer = { x: 0.62, y: 0.42, tx: 0.62, ty: 0.42 }
-  if (fine) {
-    addEventListener('pointermove', ev => { pointer.tx = ev.clientX / w; pointer.ty = ev.clientY / h }, { passive: true })
+  const pointer = { x: 0.62, y: 0.42, tx: 0.62, ty: 0.42, sx: w * 0.62, sy: h * 0.42 }
+  if (fine) addEventListener('pointermove', ev => { pointer.tx = ev.clientX / w; pointer.ty = ev.clientY / h }, { passive: true })
+
+  // camera shared by all scenes
+  const cam = { ry: 0, rx: 0, cy: 1, sy: 0, cx: 1, sx: 0, hueShift: 0 }
+  const rot = (x, y, z) => {
+    const x1 = x * cam.cy + z * cam.sy, z1 = -x * cam.sy + z * cam.cy
+    return [x1, y * cam.cx - z1 * cam.sx, y * cam.sx + z1 * cam.cx]
+  }
+  const project = (x, y, z, ox, oy, R, dist = 3.2) => {
+    const [a, b, c] = rot(x, y, z)
+    const s = 2.8 / (c + dist)
+    return { x: ox + a * R * s, y: oy + b * R * s, s, d: Math.max(0, Math.min(1, (1 - c) / 2)) }
+  }
+  const GAIN = 1.7
+  const hsla = (hue, s, l, a) => `hsla(${(hue + cam.hueShift + 360) % 360},${s}%,${l}%,${Math.min(1, a * GAIN)})`
+  let sceneAlpha = 1
+
+  // ------------------------------------------------------------- scenes ----
+  const scenes = {}
+
+  // Hero: a brain-shaped cloud of neurons firing along their connections.
+  scenes.neurons = (() => {
+    const N = small ? 70 : 130
+    const nodes = []
+    while (nodes.length < N) {
+      const x = rand(-1, 1), y = rand(-1, 1), z = rand(-1, 1)
+      if ((x / 1.45) ** 2 + (y / 0.95) ** 2 + (z / 1.1) ** 2 > 1) continue
+      if (Math.abs(x) < 0.07 && y < 0.4) continue
+      nodes.push({ x: x * 1.1, y: y * 0.9, z, flash: 0, links: [] })
+    }
+    const edges = []
+    nodes.forEach((a, i) => {
+      nodes.map((b, j) => [j, (a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2])
+        .filter(([j]) => j !== i).sort((p, q) => p[1] - q[1]).slice(0, 3)
+        .forEach(([j]) => {
+          if (edges.some(e => (e.a === i && e.b === j) || (e.a === j && e.b === i))) return
+          const e = { a: i, b: j }
+          edges.push(e); a.links.push(e); nodes[j].links.push(e)
+        })
+    })
+    const pulses = []
+    let spawn = 0
+    const fire = (i, energy) => {
+      nodes[i].flash = 1
+      if (energy < 0.25) return
+      nodes[i].links.forEach(e => {
+        if (pulses.length < 90 && Math.random() < 0.55) pulses.push({ from: i, to: e.a === i ? e.b : e.a, t: 0, speed: rand(0.012, 0.026), energy: energy * 0.72 })
+      })
+    }
+    return dt => {
+      const R = Math.min(w, h) * (small ? 0.5 : 0.42)
+      const P = nodes.map(n => project(n.x, n.y, n.z, w * (small ? 0.5 : 0.66), h * 0.52, R))
+      const buckets = [[], [], [], []]
+      edges.forEach(e => buckets[Math.max(0, Math.min(3, Math.floor((P[e.a].d + P[e.b].d) * 2)))].push(e))
+      buckets.forEach((list, k) => {
+        ctx.strokeStyle = hsla(160, 70, 62, 0.05 + (k + 0.5) * 0.04)
+        ctx.beginPath()
+        list.forEach(e => { ctx.moveTo(P[e.a].x, P[e.a].y); ctx.lineTo(P[e.b].x, P[e.b].y) })
+        ctx.stroke()
+      })
+      nodes.forEach((n, i) => {
+        const p = P[i]
+        ctx.fillStyle = hsla(n.flash > 0.05 ? 200 : 160, 80, 62 + n.flash * 20, 0.25 + p.d * 0.5 + n.flash * 0.25)
+        ctx.beginPath(); ctx.arc(p.x, p.y, (0.8 + p.d * 2.2) * p.s + n.flash * 3.2, 0, TAU); ctx.fill()
+        n.flash *= 0.93
+      })
+      for (let k = pulses.length - 1; k >= 0; k--) {
+        const q = pulses[k]
+        q.t += q.speed * dt / 16
+        const a = P[q.from], b = P[q.to]
+        ctx.fillStyle = hsla(200, 95, 72, 0.75 * q.energy + 0.2)
+        ctx.beginPath(); ctx.arc(a.x + (b.x - a.x) * q.t, a.y + (b.y - a.y) * q.t, 1.6 + q.energy * 1.4, 0, TAU); ctx.fill()
+        if (q.t >= 1) { pulses.splice(k, 1); if (Math.random() < 0.6) fire(q.to, q.energy) }
+      }
+      spawn -= dt
+      if (spawn <= 0) { fire(Math.floor(Math.random() * N), 1); spawn = rand(260, 700) }
+    }
+  })()
+
+  // Mission: a field of light flying toward you.
+  scenes.warp = (() => {
+    const N = small ? 120 : 240
+    const stars = Array.from({ length: N }, () => ({ x: rand(-1.6, 1.6), y: rand(-1, 1), z: rand(0.2, 4) }))
+    return dt => {
+      const vx = w * (0.5 + (pointer.x - 0.5) * 0.35), vy = h * (0.5 + (pointer.y - 0.5) * 0.35)
+      const F = Math.min(w, h) * 0.55
+      ctx.lineCap = 'round'
+      stars.forEach(s => {
+        const pz = s.z
+        s.z -= dt * 0.0009
+        if (s.z < 0.15) { s.z = 4; s.x = rand(-1.6, 1.6); s.y = rand(-1, 1); return }
+        const near = 1 - s.z / 4
+        ctx.strokeStyle = hsla(195, 70, 70, 0.08 + near * 0.55)
+        ctx.lineWidth = 0.6 + near * 1.8
+        ctx.beginPath()
+        ctx.moveTo(vx + (s.x / pz) * F, vy + (s.y / pz) * F)
+        ctx.lineTo(vx + (s.x / s.z) * F + 0.01, vy + (s.y / s.z) * F)
+        ctx.stroke()
+      })
+      ctx.lineWidth = 1
+    }
+  })()
+
+  // Phrenos: a fatigue landscape, a wireframe terrain rolling in perspective.
+  scenes.terrain = (() => {
+    const cols = small ? 22 : 34, rows = small ? 14 : 20
+    let t = 0
+    return dt => {
+      t += dt * 0.0006
+      const R = Math.max(w, h) * 0.55
+      const height = (u, v) => 0.18 * Math.sin(u * 3.2 + t) * Math.cos(v * 2.4 - t * 0.7) + 0.1 * Math.sin((u + v) * 5 + t * 1.6)
+      const grid = []
+      for (let j = 0; j < rows; j++) {
+        const row = []
+        for (let i = 0; i < cols; i++) {
+          const u = i / (cols - 1) * 2 - 1, v = j / (rows - 1) * 2 - 1
+          row.push(project(u * 1.7, 0.32 - height(u, v), v * 1.3, w * 0.5, h * 0.3, R, 2.8))
+        }
+        grid.push(row)
+      }
+      for (let j = 0; j < rows; j++) {
+        ctx.strokeStyle = hsla(150 + j * 2, 70, 64, 0.14 + grid[j][0].d * 0.36)
+        ctx.beginPath()
+        grid[j].forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))
+        ctx.stroke()
+      }
+      ctx.strokeStyle = hsla(170, 60, 60, 0.06)
+      ctx.beginPath()
+      for (let i = 0; i < cols; i += 2) grid.forEach((row, j) => j ? ctx.lineTo(row[i].x, row[i].y) : ctx.moveTo(row[i].x, row[i].y))
+      ctx.stroke()
+    }
+  })()
+
+  // Memory Anchor: tilted orbits with reminders travelling around a still centre.
+  scenes.orbits = (() => {
+    const rings = [0.45, 0.7, 0.95, 1.2].map((r, k) => ({ r, tilt: rand(-0.9, 0.9), spin: rand(0, TAU), speed: (0.00025 + k * 0.00008) * (k % 2 ? -1 : 1), dots: 1 + (k % 3) }))
+    return dt => {
+      const R = Math.min(w, h) * (small ? 0.55 : 0.5), ox = w * (small ? 0.5 : 0.68), oy = h * 0.5
+      rings.forEach((ring, k) => {
+        ring.spin += ring.speed * dt
+        const ct = Math.cos(ring.tilt), st = Math.sin(ring.tilt)
+        const pt = a => { const x = Math.cos(a) * ring.r, z = Math.sin(a) * ring.r; return project(x, -z * st, z * ct, ox, oy, R) }
+        ctx.strokeStyle = hsla(190, 55, 64, 0.22)
+        ctx.beginPath()
+        for (let i = 0; i <= 72; i++) { const p = pt(i / 72 * TAU); i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y) }
+        ctx.stroke()
+        for (let d = 0; d < ring.dots; d++) {
+          const p = pt(ring.spin + d * TAU / ring.dots)
+          ctx.fillStyle = hsla(k % 2 ? 80 : 190, 85, 70, 0.35 + p.d * 0.6)
+          ctx.beginPath(); ctx.arc(p.x, p.y, 2 + p.d * 4 * p.s, 0, TAU); ctx.fill()
+          ctx.fillStyle = hsla(80, 85, 70, 0.08 * p.d)
+          ctx.beginPath(); ctx.arc(p.x, p.y, 14 * p.s, 0, TAU); ctx.fill()
+        }
+      })
+      const c = project(0, 0, 0, ox, oy, R)
+      ctx.fillStyle = hsla(80, 80, 72, 0.7)
+      ctx.beginPath(); ctx.arc(c.x, c.y, 4, 0, TAU); ctx.fill()
+    }
+  })()
+
+  // Synapse: heartbeat ripples spreading across a plane.
+  scenes.ripple = (() => {
+    const rings = []
+    let beat = 0, second = -1
+    return dt => {
+      beat -= dt
+      if (beat <= 0) { rings.push({ r: 0.05 }); second = 220; beat = 1500 }
+      if (second > 0) { second -= dt; if (second <= 0) rings.push({ r: 0.05 }) }
+      const R = Math.min(w, h) * 0.5, ox = w * (small ? 0.5 : 0.68), oy = h * 0.55
+      // this plane keeps its own camera so it always reads as a surface seen from above
+      const tilt = 1.0 + (pointer.y - 0.5) * 0.4, turn = (pointer.x - 0.5) * 0.8
+      const ct = Math.cos(tilt), st = Math.sin(tilt), cr = Math.cos(turn), sr = Math.sin(turn)
+      const flat = (x, y, z) => {
+        const x1 = x * cr + z * sr, z1 = -x * sr + z * cr
+        const y2 = y * ct - z1 * st, z2 = y * st + z1 * ct
+        const s = 2.8 / (z2 + 3.2)
+        return { x: ox + x1 * R * s, y: oy + y2 * R * s }
+      }
+      for (let k = rings.length - 1; k >= 0; k--) {
+        const ring = rings[k]
+        ring.r += dt * 0.00045
+        if (ring.r > 2) { rings.splice(k, 1); continue }
+        const fade = 1 - ring.r / 2
+        ctx.strokeStyle = hsla(12, 75, 66, 0.45 * fade)
+        ctx.lineWidth = 1 + fade * 1.5
+        ctx.beginPath()
+        for (let i = 0; i <= 90; i++) {
+          const a = i / 90 * TAU
+          const p = flat(Math.cos(a) * ring.r, 0.06 * Math.sin(a * 6 + ring.r * 8) * fade, Math.sin(a) * ring.r)
+          i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)
+        }
+        ctx.stroke()
+      }
+      ctx.lineWidth = 1
+      const c = flat(0, 0, 0)
+      ctx.fillStyle = hsla(12, 80, 68, 0.8)
+      ctx.beginPath(); ctx.arc(c.x, c.y, 5 + Math.max(0, beat - 1300) / 30, 0, TAU); ctx.fill()
+    }
+  })()
+
+  // QingSi: drifting fog in depth that clears around the pointer.
+  scenes.fog = (() => {
+    const sprite = document.createElement('canvas')
+    sprite.width = sprite.height = 128
+    const g = sprite.getContext('2d')
+    const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64)
+    grad.addColorStop(0, 'rgba(200,225,230,.55)')
+    grad.addColorStop(1, 'rgba(200,225,230,0)')
+    g.fillStyle = grad
+    g.fillRect(0, 0, 128, 128)
+    const N = small ? 28 : 46
+    const puffs = Array.from({ length: N }, () => ({ x: rand(-1.8, 1.8), y: rand(-1, 1), z: rand(-1, 1.5), vx: rand(-0.00006, 0.00006), size: rand(0.5, 1.2) }))
+    return dt => {
+      const R = Math.min(w, h) * 0.6
+      ctx.globalCompositeOperation = 'lighter'
+      puffs.sort((a, b) => b.z - a.z).forEach(p => {
+        p.x += p.vx * dt
+        if (p.x > 1.9) p.x = -1.9
+        if (p.x < -1.9) p.x = 1.9
+        const q = project(p.x, p.y, p.z, w * 0.5, h * 0.5, R)
+        const clear = fine ? Math.min(1, Math.hypot(q.x - pointer.sx, q.y - pointer.sy) / 240) : 1
+        const size = p.size * R * 0.55 * q.s
+        ctx.globalAlpha = Math.min(1, (0.05 + q.d * 0.09) * clear * sceneAlpha)
+        ctx.drawImage(sprite, q.x - size, q.y - size, size * 2, size * 2)
+      })
+      ctx.globalAlpha = sceneAlpha
+      ctx.globalCompositeOperation = 'source-over'
+      puffs.slice(0, 12).forEach((p, i) => {
+        const q = project(p.x * 0.6, p.y * 0.6, p.z, w * 0.5, h * 0.5, R)
+        ctx.fillStyle = hsla(185, 70, 75, 0.5)
+        ctx.beginPath(); ctx.arc(q.x, q.y, 1.5 + (i % 3), 0, TAU); ctx.fill()
+      })
+    }
+  })()
+
+  // Our work: wireframe cubes floating at different depths, the same language as the concept art.
+  scenes.cubes = (() => {
+    const V = [[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1], [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]]
+    const E = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]]
+    const cubes = Array.from({ length: small ? 9 : 16 }, () => ({ x: rand(-1.8, 1.8), y: rand(-1, 1), z: rand(-1, 1.6), s: rand(0.08, 0.22), a: rand(0, TAU), b: rand(0, TAU), va: rand(-0.0006, 0.0006), vb: rand(-0.0005, 0.0005), hue: [80, 165, 190, 12][Math.floor(rand(0, 4))] }))
+    return dt => {
+      const R = Math.min(w, h) * 0.6
+      cubes.forEach(c => {
+        c.a += c.va * dt; c.b += c.vb * dt
+        const ca = Math.cos(c.a), sa = Math.sin(c.a), cb = Math.cos(c.b), sb = Math.sin(c.b)
+        const P = V.map(([x, y, z]) => {
+          const x1 = x * ca - z * sa, z1 = x * sa + z * ca
+          const y1 = y * cb - z1 * sb, z2 = y * sb + z1 * cb
+          return project(c.x + x1 * c.s, c.y + y1 * c.s, c.z + z2 * c.s, w * 0.5, h * 0.5, R)
+        })
+        ctx.strokeStyle = hsla(c.hue, 70, 66, 0.12 + P[0].d * 0.4)
+        ctx.beginPath()
+        E.forEach(([i, j]) => { ctx.moveTo(P[i].x, P[i].y); ctx.lineTo(P[j].x, P[j].y) })
+        ctx.stroke()
+      })
+    }
+  })()
+
+  // Handbook: pages turning on a slow helix.
+  scenes.helix = (() => {
+    const N = small ? 40 : 64
+    let t = 0
+    return dt => {
+      t += dt * 0.00035
+      const R = Math.min(w, h) * 0.5, ox = w * (small ? 0.5 : 0.7), oy = h * 0.5
+      const A = [], B = []
+      for (let i = 0; i < N; i++) {
+        const y = i / (N - 1) * 2.4 - 1.2, a = i * 0.32 + t
+        A.push(project(Math.cos(a) * 0.5, y, Math.sin(a) * 0.5, ox, oy, R))
+        B.push(project(Math.cos(a + Math.PI) * 0.5, y, Math.sin(a + Math.PI) * 0.5, ox, oy, R))
+      }
+      for (let i = 0; i < N; i += 3) {
+        ctx.strokeStyle = hsla(38, 60, 70, 0.06 + (A[i].d + B[i].d) * 0.1)
+        ctx.beginPath(); ctx.moveTo(A[i].x, A[i].y); ctx.lineTo(B[i].x, B[i].y); ctx.stroke()
+      }
+      ;[A, B].forEach((S, k) => S.forEach(p => {
+        ctx.fillStyle = hsla(k ? 38 : 80, 75, 68, 0.2 + p.d * 0.6)
+        ctx.beginPath(); ctx.arc(p.x, p.y, 1.2 + p.d * 2.6 * p.s, 0, TAU); ctx.fill()
+      }))
+    }
+  })()
+
+  // Contact: particles that gather toward the pointer.
+  scenes.gather = (() => {
+    const N = small ? 80 : 150
+    const parts = Array.from({ length: N }, () => ({ x: rand(-1.6, 1.6), y: rand(-1, 1), z: rand(-1, 1) }))
+    parts.forEach(p => { p.hx = p.x; p.hy = p.y; p.hz = p.z })
+    return dt => {
+      const R = Math.min(w, h) * 0.55
+      const gx = (pointer.x - 0.5) * 3.2, gy = (pointer.y - 0.5) * 2
+      const k = (fine ? 0.0016 : 0.0004) * dt
+      parts.forEach((p, i) => {
+        p.x += ((gx + (p.hx - gx) * 0.35) - p.x) * k
+        p.y += ((gy + (p.hy - gy) * 0.35) - p.y) * k
+        p.z += (p.hz - p.z) * k
+        const q = project(p.x, p.y, p.z, w * 0.5, h * 0.5, R)
+        ctx.fillStyle = hsla(i % 4 ? 165 : 80, 75, 66, 0.2 + q.d * 0.6)
+        ctx.beginPath(); ctx.arc(q.x, q.y, 0.8 + q.d * 2.4 * q.s, 0, TAU); ctx.fill()
+      })
+    }
+  })()
+
+  const MAP = [
+    ['.hero', 'neurons'], ['.mission-section', 'warp'], ['.ring-section', 'terrain'],
+    ['.memory-anchor-section', 'orbits'], ['.synapse-section', 'ripple'], ['.companion-section', 'fog'],
+    ['.audience-section', 'cubes'], ['.handbook-store', 'helix'], ['.waitlist-section', 'gather']
+  ]
+  const alpha = Object.fromEntries(Object.keys(scenes).map(k => [k, k === 'neurons' ? 1 : 0]))
+  let active = 'neurons', lastCheck = 0
+  const pickScene = () => {
+    const mid = h / 2
+    for (const [sel, name] of MAP) {
+      const el = document.querySelector(sel)
+      if (!el) continue
+      const r = el.getBoundingClientRect()
+      if (r.top <= mid && r.bottom >= mid) return name
+    }
+    return null
   }
 
-  let yaw = 0.4, last = performance.now(), spawn = 0, time = 0
-
-  const frame = now => {
-    const dt = Math.min(48, now - last)
+  let last = performance.now(), time = 0
+  const frame = (now, still) => {
+    const dt = still ? 0 : Math.min(48, now - last)
     last = now
     time += dt
+    if (now - lastCheck > 150 || still) { active = pickScene() || active; canvas.dataset.scene = active; lastCheck = now }
     pointer.x += (pointer.tx - pointer.x) * 0.045
     pointer.y += (pointer.ty - pointer.y) * 0.045
     if (!fine) { pointer.x = 0.5 + 0.35 * Math.sin(time / 9000); pointer.y = 0.45 + 0.2 * Math.cos(time / 11000) }
-    yaw += dt * 0.00008
+    pointer.sx = pointer.x * w
+    pointer.sy = pointer.y * h
     const scroll = scrollY || 0
-    const ry = yaw + scroll * 0.00035 + (pointer.x - 0.5) * 0.9
-    const rx = -0.25 + (pointer.y - 0.5) * 0.7 + Math.sin(scroll * 0.0006) * 0.12
-    const hue = 160 + (pointer.x - 0.5) * 120 + Math.sin(scroll * 0.0004) * 20
-    const hue2 = hue + 40 + (pointer.y - 0.5) * 60
-
-    const cy = Math.cos(ry), sy = Math.sin(ry), cx = Math.cos(rx), sx = Math.sin(rx)
-    const R = Math.min(w, h) * (small ? 0.5 : 0.42)
-    const ox = w * (small ? 0.5 : 0.66), oy = h * 0.52
-    const proj = nodes.map(n => {
-      const x1 = n.x * cy + n.z * sy, z1 = -n.x * sy + n.z * cy
-      const y2 = n.y * cx - z1 * sx, z2 = n.y * sx + z1 * cx
-      const s = 2.8 / (z2 + 3.2)
-      return { x: ox + x1 * R * s, y: oy + y2 * R * s, d: (1 - z2) / 2, s }
-    })
-
+    cam.ry = time * 0.00008 + 0.4 + scroll * 0.00035 + (pointer.x - 0.5) * 0.9
+    cam.rx = -0.25 + (pointer.y - 0.5) * 0.7 + Math.sin(scroll * 0.0006) * 0.12
+    cam.cy = Math.cos(cam.ry); cam.sy = Math.sin(cam.ry); cam.cx = Math.cos(cam.rx); cam.sx = Math.sin(cam.rx)
+    cam.hueShift = (pointer.x - 0.5) * 100 + (pointer.y - 0.5) * 40
     ctx.clearRect(0, 0, w, h)
     ctx.lineWidth = 1
-    const buckets = [[], [], [], []]
-    for (const e of edges) {
-      const d = (proj[e.a].d + proj[e.b].d) / 2
-      buckets[Math.max(0, Math.min(3, Math.floor(d * 4)))].push(e)
+    for (const name in scenes) {
+      const target = name === active ? 1 : 0
+      alpha[name] += (target - alpha[name]) * (still ? 1 : Math.min(1, dt / 260))
+      if (alpha[name] < 0.01) continue
+      sceneAlpha = alpha[name]
+      ctx.globalAlpha = sceneAlpha
+      scenes[name](still ? 0 : dt)
     }
-    buckets.forEach((list, k) => {
-      if (!list.length) return
-      ctx.strokeStyle = `hsla(${hue},70%,62%,${0.05 + (k + 0.5) * 0.04})`
-      ctx.beginPath()
-      for (const e of list) { const a = proj[e.a], b = proj[e.b]; ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y) }
-      ctx.stroke()
-    })
-    nodes.forEach((n, i) => {
-      const p = proj[i]
-      const r = (0.8 + p.d * 2.2) * p.s + n.flash * 3.2
-      ctx.fillStyle = `hsla(${n.flash > 0.05 ? hue2 : hue},80%,${62 + n.flash * 20}%,${0.25 + p.d * 0.5 + n.flash * 0.25})`
-      ctx.beginPath()
-      ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
-      ctx.fill()
-      if (n.flash > 0.05) {
-        ctx.fillStyle = `hsla(${hue2},90%,70%,${n.flash * 0.18})`
-        ctx.beginPath()
-        ctx.arc(p.x, p.y, r * 4, 0, Math.PI * 2)
-        ctx.fill()
-      }
-      n.flash *= reduce ? 0 : 0.93
-    })
-    for (let k = pulses.length - 1; k >= 0; k--) {
-      const q = pulses[k]
-      q.t += q.speed * dt / 16
-      const a = proj[q.from], b = proj[q.to]
-      const px = a.x + (b.x - a.x) * q.t, py = a.y + (b.y - a.y) * q.t
-      ctx.fillStyle = `hsla(${hue2},95%,72%,${0.75 * q.energy + 0.2})`
-      ctx.beginPath()
-      ctx.arc(px, py, 1.6 + q.energy * 1.4, 0, Math.PI * 2)
-      ctx.fill()
-      if (q.t >= 1) {
-        pulses.splice(k, 1)
-        if (Math.random() < 0.6) fire(q.to, q.energy)
-      }
-    }
-    spawn -= dt
-    if (spawn <= 0) { fire(Math.floor(Math.random() * N), 1); spawn = rand(260, 700) }
+    ctx.globalAlpha = 1
   }
 
   if (reduce) {
-    frame(performance.now())
+    const still = () => frame(performance.now(), true)
+    still()
+    let pending = false
+    addEventListener('scroll', () => { if (!pending) { pending = true; setTimeout(() => { pending = false; still() }, 200) } }, { passive: true })
+    addEventListener('resize', still, { passive: true })
     return
   }
   // 30 fps is plenty for an ambient background and halves the paint cost
@@ -894,7 +1138,6 @@ ${auto ? `<div class="wx-auto"><p class="wx-auto-tag">推荐 · 自动发货</p>
 
 (() => {
   // ---- Layered parallax inside the project cards and other concept art.
-  // Each layer moves by its own vector as its card travels across the viewport, plus a little with the pointer.
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
   const fine = matchMedia('(hover: hover) and (pointer: fine)').matches
   let mx = 0, my = 0, tmx = 0, tmy = 0
@@ -907,9 +1150,7 @@ ${auto ? `<div class="wx-auto"><p class="wx-auto-tag">推荐 · 自动发货</p>
     document.querySelectorAll('.aw-art').forEach(art => {
       const r = art.getBoundingClientRect()
       if (r.bottom < -100 || r.top > vh + 100 || r.right < -200 || r.left > vw + 200) return
-      const ox = (r.left + r.width / 2 - vw / 2) / vw
-      const oy = (r.top + r.height / 2 - vh / 2) / vh
-      const t = ox + oy
+      const t = (r.left + r.width / 2 - vw / 2) / vw + (r.top + r.height / 2 - vh / 2) / vh
       art.querySelectorAll('.aw-layer').forEach(layer => {
         const px = Number(layer.dataset.px) || 0, py = Number(layer.dataset.py) || 0
         const k = depth[layer.classList[1]] || 10
