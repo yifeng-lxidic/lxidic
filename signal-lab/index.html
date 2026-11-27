@@ -2272,6 +2272,7 @@ tE5uv0sGKEv5mPAKK0y2vaQKUEe2lY3/yknyuogMNmxI9FlDYUtNseYQwVswLl1MsU4DrZoNE2/R6Zw7
       for (const key of checkboxIds) byId(key).checked = next[key];
       byId('sleepHistory').value = next.sleepHistory;
       values = readInputs();
+      currentSleep = sleepSummary(values);
       setTarget(presetTarget[activePreset]);
       render();
     });
